@@ -1,0 +1,70 @@
+from typing import Tuple
+
+import numpy as np
+from sklearn.base import ClassifierMixin
+from sklearn.metrics import roc_auc_score
+
+
+def roc_auc_ci(
+    classifier: ClassifierMixin,
+    X: np.ndarray,
+    y: np.ndarray,
+    conf: float = 0.95,
+    n_bootstraps: int = 10_000,
+) -> Tuple[float, float]:
+    """
+    CI for ROC-AUC (bootstaping)
+
+    Parameters
+    ----------
+    classifier : ClassifierMixin
+        Обученный классификатор (должен реализовывать либо predict_proba, 
+        либо decision_function).
+    X : np.ndarray of shape (n_samples, n_features)
+        Признаки тестовой выборки.
+    y : np.ndarray of shape (n_samples,)
+        Метки тестовой выборки (двоичная классификация: 0/1).
+    conf : float, default=0.95
+        Уровень доверия (например, 0.95 для 95%-го интервала).
+    n_bootstraps : int, default=10000
+        Число бутстрэп-выборок.
+
+    Returns
+    -------
+    (lcb, ucb) : Tuple[float, float]
+        Нижняя и верхняя граница доверительного интервала.
+    """
+    # Получим предсказанные "скорки" один раз
+    if hasattr(classifier, "predict_proba"):
+        # предполагаем, что класс "1" — положительный
+        y_scores = classifier.predict_proba(X)[:, 1]
+    elif hasattr(classifier, "decision_function"):
+        y_scores = classifier.decision_function(X)
+    else:
+        raise ValueError(
+            "Классификатор должен иметь метод predict_proba или decision_function"
+        )
+
+    n_samples = y.shape[0]
+    rng = np.random.RandomState()
+    bootstrapped_scores = []
+
+    # Выполняем бутстрэп до тех пор, пока не получим нужное число валидных AUC
+    while len(bootstrapped_scores) < n_bootstraps:
+        # выборка с возвращением
+        indices = rng.randint(0, n_samples, n_samples)
+        if len(np.unique(y[indices])) < 2:
+            # в выборке нет обоих классов — пропускаем
+            continue
+        score = roc_auc_score(y[indices], y_scores[indices])
+        bootstrapped_scores.append(score)
+
+    # Рассчитываем перцентили
+    alpha = 1.0 - conf
+    lower_p = 100.0 * (alpha / 2.0)
+    upper_p = 100.0 * (1.0 - alpha / 2.0)
+    lcb, ucb = np.percentile(bootstrapped_scores, [lower_p, upper_p])
+
+    return float(lcb), float(ucb)
+
+
